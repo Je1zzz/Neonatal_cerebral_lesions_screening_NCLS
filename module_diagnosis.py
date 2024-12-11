@@ -333,10 +333,10 @@ def predict_analysis(cfg, model_list, dataloader, tta_transform):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg_classfication', type=str, default='configs/convnext.yaml',help='Config file for classification')
-    parser.add_argument('--weight_classfication', type=str, default='log/diagnostic_weight/model_35.pth',help='Weight file for classification')
+    parser.add_argument('--weight_classfication', type=str, default='log/diagnostic_weight.pth',help='Weight file for classification')
     
     parser.add_argument('--cfg_detection', type=str, default="configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml",help='Config file for detection')
-    parser.add_argument('--weight_detection', type=str, default="log/detection_weight/detection_weight.pth",help='Weight file for detection')
+    parser.add_argument('--weight_detection', type=str, default="log/detection_weight.pth",help='Weight file for detection')
     parser.add_argument('--dicom-dir', type=str, default='Example_', help='Root dir for dicom files(root/ID/Date/*.dcm)')
     parser.add_argument('--output-dir', type=str, default='output', help='Store results')
     parser.add_argument('--seed', type=int, default=3407)
