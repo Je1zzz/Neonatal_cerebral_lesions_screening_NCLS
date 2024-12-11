@@ -1,0 +1,26 @@
+Diagnostic time: 16.28秒
+Identity: AI
+Diagnostic result: Non-severe
+
+Candidate frame scoring process:
+View SAG1:
+Detect 6,confidence 0.8891,increase 0.2934,current scores 0.2934
+Detect 8,confidence 0.8751,increase 0.2888,current scores 0.5822
+Detect 5,confidence 0.6903,increase 0.2278,current scores 0.8100
+View SAG2:
+Detect 9,confidence 0.8726,increase 0.6108,current scores 0.6108
+Detect 7,confidence 0.6335,increase 0.1901,current scores 0.8009
+View SAG3:
+Detect 9,confidence 0.7966,increase 0.5576,current scores 0.5576
+View COR1:
+Detect 4,confidence 0.8763,increase 0.1314,current scores 0.1314
+Detect 4,confidence 0.8498,increase 0.1275,current scores 0.2589
+Detect 0,confidence 0.7606,increase 0.2282,current scores 0.4871
+View COR2:
+Detect 4,confidence 0.8206,increase 0.0821,current scores 0.0821
+Detect 4,confidence 0.8168,increase 0.0817,current scores 0.1637
+Detect 0,confidence 0.7671,increase 0.1534,current scores 0.3172
+Detect 2,confidence 0.6976,increase 0.2790,current scores 0.5962
+View COR3:
+Detect 3,confidence 0.8537,increase 0.4268,current scores 0.4268
+Detect 3,confidence 0.8402,increase 0.4201,current scores 0.8469
