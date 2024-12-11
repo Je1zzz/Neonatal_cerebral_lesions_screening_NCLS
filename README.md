@@ -1,4 +1,6 @@
 # Neonatal Cerebral Lesions Screening (NCLS)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 
 🚀Demo of [Neonatal_cerebral_lesions_screening_NCLS](https://github.com/Je1zzz/Neonatal_cerebral_lesions_screening_NCLS) 
 
