@@ -1,0 +1,68 @@
+project_name : Neonatal_Cranium_MultiLabelImg
+exp_name: multilabel-2Cls-CB45-regmixup2
+criterions:
+  Loss_focal:
+    def_file : ./loss/FocalLoss.py
+    loss_params : {}
+    weight: 1
+  Loss1:
+    def_file : ./loss/CBLoss.py
+    loss_params : {use_patient_per_cls: true, no_of_classes: 2}
+    #loss_params : {}
+    weight: 1.2
+
+  Loss2:
+    def_file: ./loss/BCELoss.py
+    loss_params: {use_posweight: true}
+    #loss_params: {use_patient_per_cls: false, no_of_classes: 2}
+    #loss_params : {}
+    weight: 1
+
+  Loss3:
+    def_file: ./loss/CELoss.py
+    loss_params: {}
+    weight: 0.7
+
+  Loss_crl:
+    def_file: ./loss/CRLoss.py
+    loss_params: {}
+    weight: 1.0
+
+  Loss_mixup:
+    def_file: ./loss/RegmixupLoss.py
+    loss_params: {}
+    weight: 1.0
+
+network:
+  def_file: ./models/ConvNext_gradcamy.py
+  #def_file : ./models/ConvNext.py
+  params: {name: convnext_tiny, num_classes: 2, num_img_classes: 6, num_planes: 5, patient_classify: true, cos_classifier: false}
+training_opt:
+  batch_size: 16
+  seed: 3407
+  log_dir: ./log/
+  #early_stop: early_stop.pth
+  early_stop : null
+  #pretrain_path: /data1/zhm/pretrain_weights/convnext_tiny_1k_224_ema.pth
+  pretrain_path: log/multilabel-Img-BCE-posweight/last_epoch_model.pth
+  use_my_pth: true
+  weight_path : log/multilabel-2Cls-CBLoss45/last_epoch_model.pth # 训练好的权重, 用于hard-samples mining
+  num_classes: 2
+  num_planes: 5
+  epochs: 45
+  data_path: ./data/txtfile
+
+  optimizer: adamw
+  lr : !!float 4e-4
+  momentum: 0.9
+  weight_decay: 0.0005
+
+  coslr : false
+  endlr : 0.
+  warmup: true
+  lr_step: [20,40]
+  lr_factor: 0.1
+  decay_method: coslr
+  warm_epoch: 5
+  step_size: 30
+  gamma : 0.1

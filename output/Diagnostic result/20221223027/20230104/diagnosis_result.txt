@@ -1,0 +1,32 @@
+Diagnostic time: 14.50秒
+Identity: AI
+Diagnostic result: Severe
+
+Candidate frame scoring process:
+View SAG1:
+Detect 8,confidence 0.9129,increase 0.3013,current scores 0.3013
+Detect 5,confidence 0.9001,increase 0.2970,current scores 0.5983
+Detect 6,confidence 0.8833,increase 0.2915,current scores 0.8898
+View SAG2:
+Detect 9,confidence 0.9282,increase 0.6497,current scores 0.6497
+Detect 7,confidence 0.8309,increase 0.2493,current scores 0.8990
+View SAG3:
+Detect 9,confidence 0.9209,increase 0.6446,current scores 0.6446
+Detect 7,confidence 0.7885,increase 0.2365,current scores 0.8812
+View COR1:
+Detect 4,confidence 0.8022,increase 0.1203,current scores 0.1203
+Detect 0,confidence 0.7214,increase 0.2164,current scores 0.3367
+Detect 4,confidence 0.7180,increase 0.1077,current scores 0.4444
+Detect 1,confidence 0.7004,increase 0.1401,current scores 0.5845
+Detect 1,confidence 0.6769,increase 0.1354,current scores 0.7199
+View COR2:
+Detect 4,confidence 0.8801,increase 0.0880,current scores 0.0880
+Detect 2,confidence 0.8744,increase 0.3498,current scores 0.4378
+Detect 4,confidence 0.8713,increase 0.0871,current scores 0.5249
+Detect 1,confidence 0.8423,increase 0.0842,current scores 0.6091
+Detect 0,confidence 0.8257,increase 0.1651,current scores 0.7743
+Detect 1,confidence 0.8088,increase 0.0809,current scores 0.8551
+View COR3:
+Detect 11,decrease 0.1645,current scores -0.1645
+Detect 3,confidence 0.8182,increase 0.4091,current scores 0.2446
+Detect 3,confidence 0.6737,increase 0.3369,current scores 0.5815
