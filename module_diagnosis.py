@@ -178,7 +178,7 @@ def load_model(config,i):
     for k, v in weight_dict.items():
         name = k[7:] if k.startswith('module.') else k  # Remove 'module.' prefix
         new_state_dict[name] = v
-    print(model.load_state_dict(new_state_dict, strict=False))
+    #print(model.load_state_dict(new_state_dict, strict=False))
     return model
 
 def predict_analysis(cfg, model_list, dataloader, tta_transform):

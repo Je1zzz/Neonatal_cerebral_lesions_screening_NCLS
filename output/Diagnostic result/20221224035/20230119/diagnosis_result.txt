@@ -1,30 +1,30 @@
-Diagnostic time: 22.07秒
+Diagnostic time: 21.43秒
 Identity: AI
-Diagnostic result: Non-severe
+Diagnostic result: Severe
 
 Candidate frame scoring process:
 View SAG1:
-Detect 6,confidence 0.8873,increase 0.2928,current scores 0.2928
-Detect 8,confidence 0.8800,increase 0.2904,current scores 0.5832
-Detect 5,confidence 0.8751,increase 0.2888,current scores 0.8720
+Detect 6,confidence 0.8871,increase 0.2927,current scores 0.2927
+Detect 8,confidence 0.8809,increase 0.2907,current scores 0.5834
+Detect 5,confidence 0.8755,increase 0.2889,current scores 0.8723
 View SAG2:
 Detect 9,confidence 0.9265,increase 0.6485,current scores 0.6485
 Detect 7,confidence 0.6997,increase 0.2099,current scores 0.8584
 View SAG3:
-Detect 9,confidence 0.8941,increase 0.6259,current scores 0.6259
-Detect 7,confidence 0.6237,increase 0.1871,current scores 0.8130
+Detect 9,confidence 0.8941,increase 0.6258,current scores 0.6258
+Detect 7,confidence 0.6236,increase 0.1871,current scores 0.8129
 View COR1:
-Detect 4,confidence 0.8642,increase 0.1296,current scores 0.1296
-Detect 4,confidence 0.8517,increase 0.1278,current scores 0.2574
-Detect 0,confidence 0.7866,increase 0.2360,current scores 0.4934
-Detect 1,confidence 0.6199,increase 0.1240,current scores 0.6174
+Detect 4,confidence 0.8645,increase 0.1297,current scores 0.1297
+Detect 4,confidence 0.8519,increase 0.1278,current scores 0.2575
+Detect 0,confidence 0.7862,increase 0.2359,current scores 0.4933
+Detect 1,confidence 0.6198,increase 0.1240,current scores 0.6173
 View COR2:
 Detect 4,confidence 0.8312,increase 0.0831,current scores 0.0831
 Detect 0,confidence 0.8212,increase 0.1642,current scores 0.2474
-Detect 4,confidence 0.7995,increase 0.0800,current scores 0.3273
-Detect 1,confidence 0.7753,increase 0.0775,current scores 0.4048
-Detect 1,confidence 0.7533,increase 0.0753,current scores 0.4802
-Detect 2,confidence 0.7481,increase 0.2992,current scores 0.7794
+Detect 4,confidence 0.7994,increase 0.0799,current scores 0.3273
+Detect 1,confidence 0.7751,increase 0.0775,current scores 0.4048
+Detect 1,confidence 0.7542,increase 0.0754,current scores 0.4802
+Detect 2,confidence 0.7481,increase 0.2992,current scores 0.7795
 View COR3:
 Detect 3,confidence 0.8845,increase 0.4423,current scores 0.4423
 Detect 3,confidence 0.8762,increase 0.4381,current scores 0.8804

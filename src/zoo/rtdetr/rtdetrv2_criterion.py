@@ -10,11 +10,10 @@ import torchvision
 import copy
 from detectron2.structures import RotatedBoxes, pairwise_iou_rotated
 
-from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou, angle_01_to_pi
+from .box_ops import angle_01_to_pi
 from ...misc.dist_utils import get_world_size, is_dist_available_and_initialized
 from ...core import register
-from .oriented_iou_loss import cal_diou
-from mmrotate.models.losses import GDLoss_v1
+
 
 
 @register()

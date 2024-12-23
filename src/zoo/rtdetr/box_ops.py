@@ -7,7 +7,6 @@ import torch
 from torch import Tensor
 from torchvision.ops.boxes import box_area
 from typing import Tuple
-from detectron2.structures import RotatedBoxes, pairwise_iou_rotated
 
 def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
     x_c, y_c, w, h, theta = x.unbind(-1)
