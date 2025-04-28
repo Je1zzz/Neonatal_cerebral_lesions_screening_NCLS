@@ -1,0 +1,7 @@
+Extraction time: 20.34秒
+Diagnosis time: 0.00秒
+Total time: 20.34秒
+Identity: AI
+Diagnosis: Severe
+Non-Severe probability: 0.0002
+Severe probability: 0.9998

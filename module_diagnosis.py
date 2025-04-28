@@ -17,15 +17,16 @@ import time
 import cv2
 from module_extract_view import extract_views
 from collections import defaultdict
+import datetime
 
 def remove_black_borders(img):
         image = img.copy()
         area_threshold = 20000
         if isinstance(image, Image.Image):
             image = np.array(image)
-        if image.ndim == 2: 
+        if image.ndim == 2:
             gray = image
-        elif image.ndim == 3: 
+        elif image.ndim == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             raise ValueError("Invalid image dimensions")
@@ -90,7 +91,7 @@ class SimpleTransform:
                             #transforms.Normalize(self.rgb_mean, self.rgb_std)
                         ]
         self.transform = transforms.Compose(transform_list)
-    
+
     def __call__(self,img):
         img = remove_black_borders(img)
         return self.transform(img)
@@ -115,7 +116,7 @@ class NeonatalCranialBags(Dataset):
 
                 bag = []
                 for img_file in os.listdir(examine_dir):
-                    if img_file.endswith('.png') and '聚类分布' not in img_file:  
+                    if img_file.endswith('.png') and '聚类分布' not in img_file:
                         img_path = os.path.join(examine_dir, img_file)
                         bag.append(img_path)
 
@@ -132,7 +133,7 @@ class NeonatalCranialBags(Dataset):
         bag = self.bags_list[index]
         parts = bag[0].split('/')
         patient_id = f'{parts[-3]}_{parts[-2]}'
-        img_idx = [os.path.basename(img_path) for img_path in bag] 
+        img_idx = [os.path.basename(img_path) for img_path in bag]
         bag_imgs = [self.transform(Image.open(img_path).convert('RGB')) for img_path in bag]
         bag_lengths = torch.tensor([len(bag_imgs)])
         return bag_imgs, bag_lengths, patient_id, bag, img_idx
@@ -144,14 +145,14 @@ class NeonatalCranialBags(Dataset):
         if match:
             return f"{match.group(0)}_{examine_date}"
         return None
-    
+
     @staticmethod
     def collate_fn(batch):
         bag_imgs, bag_lengths, patienti_ids, bag, img_idx = zip(*batch)
         images = torch.cat([torch.stack(bag) for bag in bag_imgs], dim=0)
         bag_lengths = torch.tensor([len(imgs) for imgs in bag_imgs])
         return images, bag_lengths, patienti_ids, bag, img_idx
-    
+
 def apply_tta_and_predict(model, imgs, bag_lengths, device, tta_transform, num_tta=10):
     # Aapply {num_tta} times TTA and obtain the average prediction
     tta_patient_pred = []
@@ -168,8 +169,7 @@ def apply_tta_and_predict(model, imgs, bag_lengths, device, tta_transform, num_t
 
 def load_model(config,i):
     device = torch.device(config['device'])
-    path = os.path.join(config['weight_classfication'])
-    checkpoint = torch.load(path, map_location='cpu')
+    checkpoint = torch.load(config['weight_classfication']+f'fold_{i}.pth', map_location='cpu')
     model = init_model(config, pretrain=False)
     model = model.to(device)
     model.eval()
@@ -178,167 +178,198 @@ def load_model(config,i):
     for k, v in weight_dict.items():
         name = k[7:] if k.startswith('module.') else k  # Remove 'module.' prefix
         new_state_dict[name] = v
-    #print(model.load_state_dict(new_state_dict, strict=False))
+    print(model.load_state_dict(new_state_dict, strict=False))
     return model
 
-def predict_analysis(cfg, model_list, dataloader, tta_transform):
+def predict_analysis(cfg, model_list, dataloader, tta_transform, cases_extraction_time=None):
     device = torch.device(cfg['device'])
 
-    severe_img = {1, 2}  
     all_patient_preds = defaultdict(list)
     all_img_preds = defaultdict(list)
     all_bag_length = []
     all_patient_ids = []
-
-    device = config['device']
+    name = []
     patient_preds_softmax_roc = {}
-    start_time =time.time()
+
+    output_dir = os.path.join(cfg['output_dir'],'DiagnosisResult')
+
+    print(f'Creating {output_dir}')
+
+    # Initialize start_time for diagnosis timing
+    start_time = time.time()
+
     with torch.no_grad():
-        for fold,model in enumerate(model_list):
+        for fold, model in enumerate(model_list):
             model.eval()
-            for data in tqdm(dataloader, desc='testing...', leave=False):
+            for data in tqdm(dataloader, desc=f'testing...', leave=False):
                 imgs, bag_lengths, patient_id, data_path, img_idx = data
                 imgs = imgs.to(device)
 
                 if fold == 0:
-                    name = [f'{path[0].split("/")[-3]} {path[0].split("/")[-2]}' for path in data_path]
+                    name.extend([f'{path[0].split("/")[-3]} {path[0].split("/")[-2]}' for path in data_path])
                     all_patient_ids.extend(data_path)
                     all_bag_length.extend(bag_lengths)
-                
-                patient_pred, img_pred = apply_tta_and_predict(model, imgs, bag_lengths, device, tta_transform, num_tta=10)
+
+                patient_pred, img_pred = apply_tta_and_predict(model, imgs, bag_lengths, device,
+                                                               tta_transform, num_tta=10)
                 all_patient_preds[fold].extend(patient_pred.detach().cpu().numpy())
                 all_img_preds[fold].extend(img_pred.detach().cpu().numpy())
+
         all_patient_preds_np = np.array(list(all_patient_preds.values()))
-        all_img_preds_np = np.array(list(all_img_preds.values()))
-
         ensemble_preds = torch.tensor(np.mean(all_patient_preds_np, axis=0))
-        ensemble_img_preds = torch.tensor(np.mean(all_img_preds_np, axis=0))
-
         ensemble_preds_softmax = F.softmax(ensemble_preds, dim=1)
         patient_probs, patient_preds = torch.max(ensemble_preds_softmax, 1)
-        threshold_class_1 = 0.7     # Non-severe
-        threshold_class_2 = 0.3     # Severe
+        threshold_class_1 = 0.8
+        threshold_class_2 = 0.2
         threshold = 0.5
 
-        patient_preds = torch.where(ensemble_preds_softmax[:, 0] > threshold_class_1, 0, 1)  # Non-severe
-        patient_preds = torch.where(ensemble_preds_softmax[:, 1] > threshold_class_2, 1, patient_preds)  # Severe
+        patient_preds = torch.where(ensemble_preds_softmax[:, 0] > threshold_class_1, 0, 1)  # Non-intervention
+        patient_preds = torch.where(ensemble_preds_softmax[:, 1] > threshold_class_2, 1, patient_preds)  # Intervention
 
+        all_img_preds_np = np.array(list(all_img_preds.values()))
+        ensemble_img_preds = torch.tensor(np.mean(all_img_preds_np, axis=0))
         img_preds = torch.sigmoid(ensemble_img_preds)
-        img_preds = (img_preds > threshold).int()   # the threshold for multi-label classification should be adjust.
+        img_preds = (img_preds > threshold).int()
 
         for i, pid in enumerate(name):
-            patient_preds_softmax_roc[pid]=ensemble_preds_softmax[i, 1].detach().cpu().numpy()
+            patient_preds_softmax_roc[pid] = ensemble_preds_softmax[i, 1].detach().cpu().numpy()
 
-
-        predicted_needs_severe = torch.zeros(len(all_bag_length), dtype=torch.int)
-        img_predicted_needs_severe = torch.zeros(len(all_bag_length), dtype=torch.int)
-        total_predicted_severe = torch.zeros(len(all_bag_length), dtype=torch.int)
+        predicted_needs_intervention = torch.zeros(len(all_bag_length), dtype=torch.int)
+        img_predicted_needs_intervention = torch.zeros(len(all_bag_length), dtype=torch.int)
+        total_predicted_intervention = torch.zeros(len(all_bag_length), dtype=torch.int)
 
         start_idx = 0
         for i, length in enumerate(all_bag_length):
             end_idx = start_idx + length
             check_number, check_date = name[i].split(' ')
-            
-            txt_path = os.path.join(cfg['output_dir'],'Diagnostic result',check_number,check_date,'diagnosis_result.txt')
+
+            txt_path = os.path.join(output_dir,check_number,check_date,'diagnosis_result.txt')
+
             patient_img_preds = img_preds[start_idx:end_idx]
 
-            # case predicted head
+            # 患者分类头预测
             if patient_preds[i] == 1:
-                predicted_needs_severe[i] = 1
-            
-            # image predicted head
+                predicted_needs_intervention[i] = 1
+
+            # 图像分类头预测
             img_flag_3 = False
             img_flag_5 = False
             img_flag_use = True
             itv_img_count = 0
-            itv_img_normal_count = 0
 
             for vector in patient_img_preds:
                 img_same_3 = False
                 img_same_5 = False
-                if vector[0] == 1:
-                    itv_img_normal_count += 1
-                if any(vector[idx] == 1 for idx in severe_img):  
-                    # if there is a image predict as PVL or Hydrocephalus directly, the case predict as severe.
-                    img_predicted_needs_severe[i] = 1
+
+                if vector[1]==1:
+                    img_predicted_needs_intervention[i] = 1
+                    itv_img_count += 1
+                if vector[2] == 1:
+                    img_predicted_needs_intervention[i] = 1
                     itv_img_count += 1
                 if vector[3] == 1:
                     img_flag_3 = True
                     img_same_3 = True
+                    itv_img_count += 1
                 if vector[5] == 1:
                     img_flag_5 = True
                     img_same_5 = True
-                if img_same_3 and img_same_5:
-                    # if IVH and dilatation exist at the same time, the case should be grade III or IV IVH and predict as severe.
-                    itv_img_count += 1
+                if img_same_3 and img_same_5:   # 同一张图同时存在扩张和出血
+                    img_predicted_needs_intervention[i] = 1
                     img_flag_use = False
+                if vector[0] != 1 and vector[3:].sum() > 0 and img_predicted_needs_intervention[i] != 1 and itv_img_count<2:
+                    if predicted_needs_intervention[i] != 1:
+                        img_predicted_needs_intervention[i] = 2
 
-            if img_flag_3 and img_flag_5:
-                img_predicted_needs_severe[i] = 1
+            if img_flag_3 and img_flag_5:   #同一个病例同时存在扩张和出血（不同图）
                 if img_flag_use:
                     itv_img_count += 1
 
             img_flag_3 = False
             img_flag_5 = False
-            
-            # Combine the case and image prediction
-            if predicted_needs_severe[i] == 0 and img_predicted_needs_severe[i] == 1:
-                if itv_img_count >= 2 or (itv_img_count == 1 and itv_img_normal_count < 3):
-                    total_predicted_severe[i] = 1
-                else:
-                    total_predicted_severe[i] = 0
-            elif predicted_needs_severe[i] == 1 and img_predicted_needs_severe[i] == 0:
-                if patient_probs[i] > 0.95:
-                    total_predicted_severe[i] = 1
-                else:
-                    total_predicted_severe[i] = 0
+
+            # ---------- 算法1 -------------
+            # if predicted_needs_intervention[i] == 0 and img_predicted_needs_intervention[i] == 1:
+            #     if itv_img_count >= 2 or (itv_img_count == 1 and itv_img_normal_count < 3):
+            #         total_predicted_intervention[i] = 1
+            # elif predicted_needs_intervention[i] == 1 and img_predicted_needs_intervention[i] == 0:
+            #     if patient_probs[i] > 0.95:
+            #         total_predicted_intervention[i] = 1
+            # else:
+            #     total_predicted_intervention[i] = predicted_needs_intervention[i]
+
+
+            # ----------- 算法2 -----------
+            if predicted_needs_intervention[i] == 0 and img_predicted_needs_intervention[i] == 1:
+                if itv_img_count >= 2:
+                    total_predicted_intervention[i] = 1
             else:
-                total_predicted_severe[i] = predicted_needs_severe[i]
-            
-            #total_predicted_severe[i] = predicted_needs_severe[i]
-            final_result = "Severe" if total_predicted_severe[i] == 1 else "Non-severe"
-            
+                total_predicted_intervention[i] = predicted_needs_intervention[i]
+
+
+            # # -------------算法3 ---------------------
+            # if predicted_needs_intervention[i] == 0 and img_predicted_needs_intervention[i] == 1:
+            #     if patient_probs[i] > 0.95:   # 如果图像预测为Severe，则非Severe需要概率大于95%
+            #         total_predicted_intervention[i] = 0
+            #     else:
+            #         total_predicted_intervention[i] = 1
+            # elif predicted_needs_intervention[i] == 0 and itv_img_count >= 3: # 如果有3张及以上出血，预测为Severe
+            #     total_predicted_intervention[i] = 1
+            # else:
+            #     total_predicted_intervention[i] = predicted_needs_intervention[i]
+
+
+            intervention_result = "Severe" if total_predicted_intervention[i] == 1 else "Non-severe"
+            patient_head_result = "Severe" if predicted_needs_intervention[i] == 1 else "Non-severe"
+
             start_idx = end_idx
             end_time = time.time()
-            time_in_sec = 0.0  
-            diagnosis_process = []
-            if os.path.exists(txt_path):    
-                with open(txt_path, 'r', encoding='utf-8') as file:
-                    lines = file.readlines()  
-                    
-                    for line in lines:
-                        if line.startswith('Diagnostic time'):
-                            time_in_sec = float(line.strip().replace("Diagnostic time：", "").replace("Diagnostic time:", "").replace("秒", "").strip())  
-                        elif line.startswith('Candidate frame scoring process'):
-                            diagnosis_process.append(line.strip())
-                            for next_line in lines[lines.index(line)+1:]:
-                                diagnosis_process.append(next_line.strip())
 
-            now_time = time_in_sec + (end_time - start_time)
+            # Calculate diagnosis time for this case
+            diagnosis_time = end_time - start_time
+
+            # Get extraction time for this case if available
+            check_id = f"{check_number}_{check_date}"
+            extraction_time = 0.0
+            if cases_extraction_time and check_id in cases_extraction_time:
+                extraction_time = cases_extraction_time[check_id]
+
+            # Calculate total time (extraction + diagnosis)
+            total_time = extraction_time + diagnosis_time
+
+            diagnosis_process = []
 
             if not os.path.exists(os.path.dirname(txt_path)):
-                os.makedirs(os.path.dirname(txt_path),exist_ok=True)
+                os.makedirs(os.path.dirname(txt_path), exist_ok=True)
 
             with open(txt_path, 'w', encoding='utf-8') as file:
-                file.write(f'Diagnostic time: {now_time:.2f}秒\n')
+                file.write(f'Extraction time: {extraction_time:.2f}秒\n')
+                file.write(f'Diagnosis time: {diagnosis_time:.2f}秒\n')
+                file.write(f'Total time: {total_time:.2f}秒\n')
                 file.write(f'Identity: AI\n')
-                file.write(f'Diagnostic result: {final_result}\n\n')
+                file.write(f'Diagnosis: {intervention_result}\n')
+                file.write(f'Non-Severe probability: {ensemble_preds_softmax[i, 0].item():.4f}\n')
+                file.write(f'Severe probability: {ensemble_preds_softmax[i, 1].item():.4f}\n')
                 if diagnosis_process:
                     file.write('\n'.join(diagnosis_process))
+
+            # Reset start time for next case
             start_time = time.time()
-            print(f'ID: {check_number}, Date: {check_date}, Final Result: {final_result}')
-            print(f'Save txt to {txt_path}')
+            start_idx = end_idx
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg_classfication', type=str, default='configs/convnext.yaml',help='Config file for classification')
-    parser.add_argument('--weight_classfication', type=str, default='log/diagnostic_weight.pth',help='Weight file for classification')
-    
+    parser.add_argument('--weight_classfication', type=str, default='./log/diagnostic_weight',
+                        help='Weight file for classification')
+
     parser.add_argument('--cfg_detection', type=str, default="configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml",help='Config file for detection')
-    parser.add_argument('--weight_detection', type=str, default="log/detection_weight.pth",help='Weight file for detection')
-    parser.add_argument('--dicom-dir', type=str, default='Example_', help='Root dir for dicom files(root/ID/Date/*.dcm)')
-    parser.add_argument('--output-dir', type=str, default='output', help='Store results')
+    parser.add_argument('--weight_detection', type=str, default="/data0/zhm/neonatal_cranial_AI/integrate_AI/log/detection_weight/detection_weight.pth",
+                        help='Weight file for detection')
+
+    parser.add_argument('--dicom-dir', type=str, default='./Example_', help='Root dir for dicom files(root/ID/Date/videos)')
+    parser.add_argument('--output-dir', type=str, default='./output', help='Store results')
     parser.add_argument('--seed', type=int, default=3407)
     parser.add_argument('--device', default='cuda', help='device id (i.e. 0 or 0,1 or cpu)')
     parser.add_argument('--world_size', default=4, type=int, help='number of distributed processes')
@@ -355,12 +386,11 @@ if __name__ == '__main__':
     for i in range(1,6):
         model = load_model(config,i)
         model_list.append(model)
-    extract_views(args)
-    bag = NeonatalCranialBags(os.path.join(config['output_dir'],'Standard View'))
+    # Extract views and get processing times for each case
+    cases_extraction_time = extract_views(args)
+    bag = NeonatalCranialBags(os.path.join(config['output_dir'],'StandardViews'))
     dataloader = DataLoader(bag, batch_size=32, shuffle=False, collate_fn=bag.collate_fn)
     tta_transform = TTATransform()
-    predict_analysis(config, model_list,dataloader, tta_transform)
+    predict_analysis(config, model_list, dataloader, tta_transform, cases_extraction_time)
 
 
-
-    

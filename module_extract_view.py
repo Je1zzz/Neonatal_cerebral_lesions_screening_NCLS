@@ -2,39 +2,38 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 import numpy as np
-from PIL import Image, ImageDraw,ImageFont
+from PIL import Image
 import cv2
 import os
-import time
 import sys
 import pydicom
-import matplotlib.pyplot as plt
-from sklearn.cluster import DBSCAN
-import colorsys
-from scipy.stats import norm
+import shutil
+import json
+from collections import namedtuple
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from src.core import YAMLConfig
+import time
+from datetime import timedelta
 
+# Anatomy configuration
 neonatal_cranium_category2name = {
-    4: 'COR Corpus Callosum',              
-    5: 'COR Anterior Horn of Lateral Ventricle',  
-    6: 'COR Third Ventricle',             
-    7: 'COR Lateral Ventricle',            
-    8: 'COR Thalamus and Basal Ganglia',   
-    9: 'SAG Corpus Callosum',              
-    10: 'SAG Trigeminal Nerve Area',      
-    11: 'SAG Lateral Ventricle',           
-    12: 'SAG Cerebellum',                 
-    13: 'SAG Thalamus and Basal Ganglia',  
-    # 14: 'Choroid Plexus Cyst',            
-    # 15: 'Hemorrhagic Focus',             
-    # 16: 'Softening Focus',               
-    # 17: 'Hydrocephalus',                 
-    # 18: 'Hemorrhagic Focus Liquefaction',  
+    4: 'COR Corpus Callosum',
+    5: 'COR Anterior Horn of Lateral Ventricle',
+    6: 'COR Third Ventricle',
+    7: 'COR Lateral Ventricle',
+    8: 'COR Thalamus and Basal Ganglia',
+    9: 'SAG Corpus Callosum',
+    10: 'SAG Trigeminal Nerve Area',
+    11: 'SAG Lateral Ventricle',
+    12: 'SAG Cerebellum',
+    13: 'SAG Thalamus and Basal Ganglia',
 }
 
 neonatal_cranium_category2label = {k: i for i, k in enumerate(neonatal_cranium_category2name.keys())}
 neonatal_cranium_label2category = {v: k for k, v in neonatal_cranium_category2label.items()}
+
+# Define a named tuple for candidate frames
+CandidateFrame = namedtuple('CandidateFrame', ['frame_idx', 'view_type', 'score', 'file_path', 'total_frames'])
 
 class Model(nn.Module):
     def __init__(self, cfg):
@@ -44,8 +43,20 @@ class Model(nn.Module):
 
     def forward(self, images, orig_target_sizes):
         outputs = self.model(images)
-        outputs = self.postprocessor(outputs, orig_target_sizes)    # (x1,y1,x2,y2,theta)
+        outputs = self.postprocessor(outputs, orig_target_sizes)
         return outputs
+
+def save_excel_data(excel_data, output_file):
+    with open(output_file, 'w') as f:
+        json.dump(excel_data, f, ensure_ascii=False, indent=4)
+    print(f"Saved excel data to {output_file}")
+
+# Function to load excel data from a text file (if exists)
+def load_excel_data(input_file):
+    if os.path.exists(input_file):
+        with open(input_file, 'r') as f:
+            return json.load(f)
+    return []
 
 def process_frame(image_data, photometric_interpretation):
     if photometric_interpretation == 'MONOCHROME1':
@@ -61,505 +72,452 @@ def process_frame(image_data, photometric_interpretation):
         raise ValueError(f"Unsupported photometric interpretation: {photometric_interpretation}")
     return image
 
-def extract_views(args):
-    cfg = YAMLConfig(args.cfg_detection, resume=args.weight_detection)
 
-    if args.weight_detection:
-        checkpoint = torch.load(args.weight_detection, map_location=args.device)
-        if 'ema' in checkpoint:
-            state = checkpoint['ema']['module']
-        else:
-            state = checkpoint['model']
+def filter_cor_frames(candidates):
+    """Filter COR frames based on the relationship between COR2 and COR3 using mean frame sequence"""
+    if not candidates:
+        return candidates
+
+    # Check if we have enough frames in each view
+    cor3_frames = candidates.get("COR3", [])
+    cor2_frames = candidates.get("COR2", [])
+    cor1_frames = candidates.get("COR1", [])
+
+    if (len(cor3_frames) < 5 or len(cor2_frames) == 0 or len(cor1_frames) == 0):
+        return candidates
+
+    # Calculate mean frame sequence for COR2 and COR3
+    mean_cor2 = np.mean([c.frame_idx for c in cor2_frames])
+    mean_cor3 = np.mean([c.frame_idx for c in cor3_frames])
+
+    if mean_cor2 < mean_cor3:
+        # COR1 → COR2 → COR3 order
+        # Find max frame in COR2
+        max_cor2_frame = max(c.frame_idx for c in cor2_frames)
+        # Remove COR1 frames that have higher frame numbers than COR2 max frame
+        candidates["COR1"] = [c for c in cor1_frames if c.frame_idx < max_cor2_frame]
     else:
-        raise AttributeError('Only support resume to load model.state_dict by now.')
+        # COR3 → COR2 → COR1 order
+        # Find min frame in COR2
+        min_cor2_frame = min(c.frame_idx for c in cor2_frames)
+        # Remove COR1 frames that have lower frame numbers than COR2 min frame
+        candidates["COR1"] = [c for c in cor1_frames if c.frame_idx > min_cor2_frame]
 
-    cfg.model.load_state_dict(state)
-    model = Model(cfg).to(args.device)
+    return candidates
 
-    print("Warming up the model...")
-    blank_image = torch.zeros((1, 3, 640, 640)).to(args.device)
-    blank_size = torch.tensor([[640, 640]]).to(args.device)
-    _ = model(blank_image, blank_size)
+def adjust_sag_frames(candidates):
+    """Adjust SAG frames by potentially converting some SAG2 to SAG3"""
+    if not candidates:
+        return candidates
 
-    return process_files(model, args.dicom_dir, args.output_dir, device=args.device, thrh=0.6)
+    sag1_frames = candidates.get("SAG1", [])
+    sag2_frames = candidates.get("SAG2", [])
+
+    if (len(sag1_frames) < 5 or len(sag2_frames) < 5 or
+        not any(s.frame_idx > max(s1.frame_idx for s1 in sag1_frames) for s in sag2_frames) or
+        not any(s.frame_idx < min(s1.frame_idx for s1 in sag1_frames) for s in sag2_frames)):
+        return candidates
+
+    # Find median frame of SAG1 as split point
+    sag1_median = np.median([s.frame_idx for s in sag1_frames])
+
+    # Convert SAG2 frames that are after SAG1 median to SAG3
+    new_sag2 = []
+    new_sag3 = candidates.get("SAG3", [])
+
+    for s in sag2_frames:
+        if s.frame_idx > sag1_median:
+            # Convert to SAG3
+            new_sag3.append(CandidateFrame(
+                frame_idx=s.frame_idx,
+                view_type="SAG3",
+                score=s.score,
+                file_path=s.file_path,
+                total_frames=s.total_frames
+            ))
+        else:
+            new_sag2.append(s)
+
+    candidates["SAG2"] = new_sag2
+    candidates["SAG3"] = new_sag3
+
+    return candidates
+
+def evaluate_candidate_queues(all_results):
+    """Evaluate and select the best COR and SAG queues from all results"""
+    # Separate COR and SAG queues
+    cor_queues = []
+    sag_queues = []
+
+    for result in all_results:
+        if result['primary_queue'] == 'COR':
+            cor_queues.append(result)
+        else:
+            sag_queues.append(result)
+
+    # Function to calculate queue score
+    def calculate_queue_score(candidates):
+        score = 0.0
+        for view in candidates:
+            if candidates[view]:  # If view has frames
+                top_score = max(c.score for c in candidates[view])
+                score += top_score
+        return score
+
+    # Find best COR queue
+    best_cor = None
+    max_cor_score = -1
+    for queue in cor_queues:
+        current_score = calculate_queue_score(queue['candidates'])
+        if current_score > max_cor_score:
+            max_cor_score = current_score
+            best_cor = queue
+
+    # Find best SAG queue
+    best_sag = None
+    max_sag_score = -1
+    for queue in sag_queues:
+        current_score = calculate_queue_score(queue['candidates'])
+        if current_score > max_sag_score:
+            max_sag_score = current_score
+            best_sag = queue
+
+    return {
+        'best_cor': best_cor,
+        'best_sag': best_sag,
+        'cor_score': max_cor_score,
+        'sag_score': max_sag_score
+    }
+
 
 def initialize_candidates():
-    return {"COR1": {}, "COR2": {}, "COR3": {}, "SAG1": {}, "SAG2": {}}
+    return {"COR1": [], "COR2": [], "COR3": [], "SAG1": [], "SAG2": [], "SAG3": []}
 
-def classify_frame(labels):
-    # Candidate frame selection rules
+def classify_frame(labels_list):
     possible_views = []
-    labels_list = labels.detach().cpu().numpy().tolist()
-    
-    ### Coronal Plane
-    # COR1 Anterior Horn View contains: 
-    #   - Corpus Callosum(1),  
-    #   - Anterior Horn of Lateral Ventricle(2), 
-    #   - Thalamus and Basal Ganglia(2)
-    # Selection rule: appear Corpus Callosum
-    if labels_list.count(4) >= 1 :
-        possible_views.append("COR1")
-    
-    # COR2 Third Ventricle View contains contains 
-    #   - Corpus Callosum(1),  
-    #   - Anterior Horn of Lateral Ventricle(2), 
-    #   - Thalamus and Basal Ganglia(2)
-    #   - Third Ventricle(1)
-    # Selection rule: appear Third Ventricle
-    if  labels_list.count(2) >= 1:
-        possible_views.append("COR2")
-    
-    # COR3 Body View contains: 
-    #   - Lateral Ventricle(2)
-    # Selection rule: appear Lateral Ventricle
-    if labels_list.count(3) >= 1:
-        possible_views.append("COR3")
-    
-    # SAG1 Midsagittal View contains:
-    #   - Corpus Callosum(1),
-    #   - Trigeminal Nerve Area(1),
-    #   - Cerebellum(1),
-    # Selection rule: appear 2 of 3 structures above
-    if (labels_list.count(5) >= 1 and labels_list.count(6) >= 1) or\
-        (labels_list.count(5)>=1 and  labels_list.count(8) >= 1) or\
-        (labels_list.count(6)>=1 and labels_list.count(8)>=1):
-        possible_views.append("SAG1")
-    
-    # SAG2 Parasagittal View: 
-    #   - Lateral Ventricle(1),
-    #   - Thalamus and Basal Ganglia(1)
-    # Selection rule: Any of the structures appear
-    if labels_list.count(7) >= 1 or labels_list.count(9) >= 1:
-        possible_views.append("SAG2")
-    
-    return possible_views
 
+    if labels_list.count(6) >= 1:
+        possible_views.append("COR2")
+    elif labels_list.count(4) >= 1:
+        possible_views.append("COR1")
+    if labels_list.count(7) >= 1:
+        possible_views.append("COR3")
+    if (labels_list.count(9) >= 1 and labels_list.count(10) >= 1) or \
+       (labels_list.count(9) >= 1 and labels_list.count(12) >= 1) or \
+       (labels_list.count(10) >= 1 and labels_list.count(12) >= 1):
+        possible_views.append("SAG1")
+    if labels_list.count(11) >= 1 or labels_list.count(13) >= 1:
+        possible_views.append("SAG2")
+    if labels_list.count(12) >= 2:
+        possible_views.append("SAG3")
+
+    return possible_views
 
 def calculate_score(labels, boxes, scores, view_type, pil_image):
     score = 0.0
-    log = []
-
-    # Base score
     anatomy_scores = {
-        "COR1": {0: 0.3, 1: 0.2, 4: 0.15},
-        "COR2": {0: 0.2, 1: 0.1, 4: 0.1, 2: 0.4},
-        "COR3": {3: 0.5},
-        "SAG1": {5: 0.33, 6: 0.33, 8: 0.33},  
-        "SAG2": {7: 0.3, 9: 0.7}
+        "COR1": {4: 0.3, 5: 0.2, 8: 0.15},
+        "COR2": {4: 0.2, 5: 0.1, 8: 0.1, 6: 0.4},
+        "COR3": {7: 0.5},
+        "SAG1": {9: 0.33, 10: 0.33, 12: 0.33},
+        "SAG2": {11: 0.3, 13: 0.7},
+        "SAG3": {12: 0.8}
     }
 
-    # Maximum number of each anatomy structure allowed in each view
     anatomy_limits = {
-        "COR1": {0: 1, 1: 2, 4: 2},
-        "COR2": {0: 1, 1: 2, 4: 2, 2: 1},
-        "COR3": {3: 2},
-        "SAG1": {5: 1, 6: 1, 8: 1},
-        "SAG2": {7: 1, 9: 1}
+        "COR1": {4: 1, 5: 2, 8: 2},
+        "COR2": {4: 1, 5: 2, 8: 2, 6: 1},
+        "COR3": {7: 2},
+        "SAG1": {9: 1, 10: 1, 12: 1},
+        "SAG2": {11: 1, 13: 1},
+        "SAG3": {12: 2}
     }
 
     base_score = anatomy_scores.get(view_type, {})
     max_limit = anatomy_limits.get(view_type, {})
-    center_points = {}
     label_counts = {}
 
-    # Iterate through detected labels and adjust the score
-    for i, label in enumerate(labels.detach().cpu().numpy()):
+    for i, label in enumerate(labels):
         confidence = scores[i].item()
-        box = boxes[i].detach().cpu().numpy()
-        x1, y1, x2, y2, theta = box
-        theta = (theta - 0.5) * np.pi
-        w = x2 - x1
-        h = y2 - y1
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-        if label not in center_points:
-            center_points[label] = []
-        center_points[label].append((center_x, center_y, theta))
-        
         if label in base_score:
-            # Check if we've reached the limit for this label
             label_counts[label] = label_counts.get(label, 0) + 1
             if label_counts[label] <= max_limit.get(label, float('inf')):
-                # Add score based on confidence and the relevant anatomy score
                 score += base_score[label] * confidence
-                score_change = base_score[label] * confidence
-                log.append(f"Detect {label},confidence {confidence:.4f},increase {score_change:.4f},current scores {score:.4f}")
         else:
-            # Subtract score for anatomy that should not be present
             score -= 0.2 * confidence
-            score_change = 0.2 * confidence
-            log.append(f"Detect {label},decrease {score_change:.4f},current scores {score:.4f}")
-    
-    # Extra score calculation
-    if view_type == "COR2":
-        if 2 in center_points and 4 in center_points:
-            third_ventricle_center = center_points[2][0]
-            thalamus_centers = [center[0] for center in center_points[4]]
-            if len(thalamus_centers) >= 2:
-                min_thalamus = min(thalamus_centers)
-                max_thalamus = max(thalamus_centers)
-                if not (min_thalamus < third_ventricle_center[0] < max_thalamus):
-                    score -= 0.2    
-                    log.append(f"Third ventricle not between two thalamic,decrease 0.2,current scores {score:.4f}")
 
-        left_region = pil_image.crop((x1, y1, x1 + w // 3, y2))
-        right_region = pil_image.crop((x1 + 2 * w // 3, y1, x2, y2))
-        center_region = pil_image.crop((x1 + w // 3, y1, x1 + 2 * w // 3, y2))
-        left_pixels = np.mean(np.array(left_region))
-        right_pixels = np.mean(np.array(right_region))
-        center_pixels = np.mean(np.array(center_region))
-        if not center_pixels < min(left_pixels, right_pixels):
-            score -= 0.2 
-            log.append(f"Pixel values in the center of the third ventricle are higher than on both sides,decrease 0.2,current scores {score:.4f}")
+    return score
 
-    return score , log
-
-def filter_frame_scores(frame_scores,log_recore):
-    # Determine the plane type based on the number of frames (COR or SAG)
-    cor_count = sum(len(frame_scores.get(f'COR{i}', {})) for i in range(1, 4))
-    sag_count = sum(len(frame_scores.get(f'SAG{i}', {})) for i in range(1, 3))
-    plane_type = None
+def determine_primary_queue(candidates):
+    """Determine if the primary queue should be COR or SAG based on frame counts"""
+    cor_count = sum(len(candidates[view]) for view in ["COR1", "COR2", "COR3"])
+    sag_count = sum(len(candidates[view]) for view in ["SAG1", "SAG2", "SAG3"])
     if cor_count > sag_count:
-        frame_scores.pop('SAG1', None)
-        frame_scores.pop('SAG2', None)
-
-        log_recore.pop('SAG1',None)
-        log_recore.pop('SAG2',None)
-
-        plane_type = 'COR'
-        print("The video is determined to be a coronal plane (COR)")
-    elif sag_count > cor_count:
-        frame_scores.pop('COR1', None)
-        frame_scores.pop('COR2', None)
-        frame_scores.pop('COR3', None)
-        log_recore.pop('COR1',None)
-        log_recore.pop('COR2',None)
-        log_recore.pop('COR3',None)
-        plane_type = 'SAG'
-        print("The video is determined to be a sagittal plane (SAG)")
+        # Remove all SAG views
+        for view in ["SAG1", "SAG2", "SAG3"]:
+            candidates[view] = []
+        return "COR"
     else:
-        print("The video contains an equal number of coronal and sagittal plane data, and the data has not been deleted")
-    
-    return frame_scores, plane_type,log_recore
+        # Remove all COR views
+        for view in ["COR1", "COR2", "COR3"]:
+            candidates[view] = []
+        return "SAG"
 
-def candidate_selection(frame_data, frame_idx, frame_candidates,log_candidates, model, transforms, device, thrh, photometric_interpretation=None):
-    pil_frame = process_frame(frame_data, photometric_interpretation) if photometric_interpretation else frame_data
-    w, h = pil_frame.size
-    orig_size = torch.tensor([[w, h]]).to(device)
-    im_data = transforms(pil_frame)[None].to(device)
-    output = model(im_data, orig_size)
-    labels, boxes, scores = output
-    lab = labels[scores > thrh]
-    box = boxes[scores > thrh]
-    scrs = scores[scores > thrh]
-    possible_views = classify_frame(lab)    
-    for view in possible_views:             
-        frame_candidates[view][frame_idx],log_candidates[view][frame_idx] = calculate_score(lab, box, scrs, view, pil_frame)
+def filter_invalid_candidates(candidates, min_frame_ratio=0.2):
+    """Remove entire candidate set if total candidate frames < min_frame_ratio*total_frames"""
+    if not candidates or not any(candidates.values()):
+        return None  # No candidates at all
 
+    # Get total frames from the first candidate
+    total_frames = None
+    for view_candidates in candidates.values():
+        if view_candidates:  # 找到第一个有候选帧的视图类型
+            total_frames = view_candidates[0].total_frames
+            break
+    min_frames_required = total_frames * min_frame_ratio
+
+    # Calculate total candidate frames across all view types
+    total_candidate_frames = sum(len(view_candidates) for view_candidates in candidates.values())
+
+    if total_candidate_frames >= min_frames_required:
+        return candidates  # Keep all candidates
+    else:
+        print(f"Removing entire candidate set: only {total_candidate_frames} candidate frames "
+              f"(needs at least {min_frames_required:.0f})")
+        return None  # Remove all candidates for this file
 
 def process_mp4_file(video_path, model, transforms, device, thrh):
-    cap = cv2.VideoCapture(video_path)
-    frame_candidates = initialize_candidates()
-    log_candidates = initialize_candidates()
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    time_saving= []
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    try:
         start_time = time.time()
-        candidate_selection(pil_frame, frame_idx, frame_candidates,log_candidates, model, transforms, device, thrh)
-        print(f"MP4 file {video_path}, frame {frame_idx} processed in {(time.time() - start_time) * 1000:.2f} ms")
-        time_saving.append((time.time() - start_time) * 1000)
-    fps = (frame_count-1) / (sum(time_saving[1:]) / 1000)
+        print(f"\n=== Processing {video_path} ===")
 
-    return frame_candidates, log_candidates,frame_count, time_saving, fps
+        # Open video file
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Error opening video file {video_path}")
+            return None
 
-def process_dicom_file(dicom_path, model, transforms, device, thrh):
-    ds = pydicom.dcmread(dicom_path, force=True)
-    photometric_interpretation = ds.PhotometricInterpretation
-    image_data = ds.pixel_array
-    num_frames = image_data.shape[0] if len(image_data.shape) >= 3 else 1
-    frame_candidates = initialize_candidates()
-    log_candidates = initialize_candidates()
-    time_saving = []
+        # Get video properties
+        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if num_frames <= 1:
+            return None
 
-    for frame_idx in range(num_frames):     
-        frame_data = image_data[frame_idx] if num_frames > 1 else image_data
-        start_time = time.time()
-        candidate_selection(frame_data, frame_idx, frame_candidates,log_candidates, model, transforms, device, thrh, photometric_interpretation)
-        print(f"DICOM file {dicom_path}, frame {frame_idx} processed in {(time.time() - start_time) * 1000:.2f} ms")
-        time_saving.append((time.time() - start_time) * 1000)
-    fps = (num_frames-1) / (sum(time_saving[1:]) / 1000)
+        candidates = initialize_candidates()
+        print(f"Total frames to process: {num_frames}")
 
-    return frame_candidates, log_candidates,num_frames,time_saving, fps
+        for frame_idx in range(num_frames):
+            if frame_idx % 10 == 0:  # Print progress every 10 frames
+                print(f"Reading frame {frame_idx}/{num_frames} ({(frame_idx/num_frames*100):.1f}%)", end='\r')
 
-def process_clusters(frame_candidates, plane_type,num_frames,log_candidates):
-    # Delete invaild frame based on the DBSCAN cluster
-    cluster = {}
-    if plane_type == "COR":
-        cor2_frames = list(frame_candidates.get('COR2', {}).keys())
-        cor2_scores = list(frame_candidates.get('COR2', {}).values())
-        cor3_frames = list(frame_candidates.get('COR3', {}).keys())
-        cor3_scores = list(frame_candidates.get('COR3', {}).values())
-        cor1_frames = list(frame_candidates.get('COR1', {}).keys())
-        cor1_scores = list(frame_candidates.get('COR1', {}).values())
-        cor1_clusters = None
-        cor2_clusters = None
-        cor3_clusters = None
-
-        if cor2_frames:
-            cor2_data = np.array(list(zip(cor2_frames, cor2_scores)))
-            cor2_clusters = DBSCAN(eps=4.0, min_samples=3).fit(cor2_data).labels_
-            cor2_max_cluster_frames = np.array(cor2_frames)[cor2_clusters != -1] # delete noise frame
-            if len(cor2_max_cluster_frames) > 0:   
-                cor2_avg_frame = np.mean(cor2_max_cluster_frames)   # calculate this for determine scanning direction
-            else:
-                cor2_avg_frame = np.mean(cor2_frames)
-        if cor3_frames:
-            cor3_data = np.array(list(zip(cor3_frames, cor3_scores)))
-            cor3_clusters = DBSCAN(eps=4.0, min_samples=3).fit(cor3_data).labels_
-            cor3_avg_frame = np.mean(cor3_frames)  
-         
-        if cor1_frames:
-            cor1_data = np.array(list(zip(cor1_frames, cor1_scores)))
-            cor1_clusters = DBSCAN(eps=4.0, min_samples=3).fit(cor1_data).labels_
-
-            if cor2_frames and cor3_frames and cor2_avg_frame < cor3_avg_frame:
-                # COR scanning direction is COR1 -> COR2 -> COR3
-                min_cor2_frame = min(cor2_max_cluster_frames) if len(cor2_max_cluster_frames) > 0 else min(cor2_frames)
-                frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame <= min_cor2_frame - 4}
-
-            elif cor2_frames and cor3_frames and cor2_avg_frame > cor3_avg_frame:
-                # COR scanning direction is COR3 -> COR2 -> COR1
-                max_cor2_frame = max(cor2_max_cluster_frames) if len(cor2_max_cluster_frames) > 0 else max(cor2_frames)
-                frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame >= max_cor2_frame + 4}
-            elif cor2_frames: # if there is not cor3
-                min_cor2_frame = min(cor2_max_cluster_frames) if len(cor2_max_cluster_frames) > 0 else min(cor2_frames)
-                max_cor2_frame = max(cor2_max_cluster_frames) if len(cor2_max_cluster_frames) > 0 else max(cor2_frames)
-                
-                # filter the frame of cor1 
-                left_cor1_frames = [frame for frame in cor1_frames if frame < min_cor2_frame]
-                right_cor1_frames = [frame for frame in cor1_frames if frame > max_cor2_frame]
-                
-                if left_cor1_frames and right_cor1_frames:
-                    # calculate distance
-                    start_to_cor1 = min(left_cor1_frames)
-                    cor1_to_end =  num_frames - max(right_cor1_frames)
-                    
-                    if start_to_cor1 > cor1_to_end:
-                        # if cor1 is closer to the start, the scanning direction is COR1 -> COR2
-                        frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame <= min_cor2_frame - 4}
-                    else:
-                        # if cor1 is closer to the end, the scanning direction is COR2 -> COR1
-                        frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame >= max_cor2_frame + 4}
-                elif left_cor1_frames:
-                    # Only left cor1 exists, the scanning direction is COR1 -> COR2
-                    frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame <= min_cor2_frame - 4}
-                elif right_cor1_frames:
-                    # Only right cor1 exists, the scanning direction is COR2 -> COR1
-                    frame_candidates['COR1'] = {frame: score for frame, score in frame_candidates['COR1'].items() if frame >= max_cor2_frame + 4}
-                else:
-                    pass
-        
-        cluster['COR1'] = cor1_clusters if cor1_clusters is not None else []
-        cluster['COR2'] = cor2_clusters if cor2_clusters is not None else []    
-        cluster['COR3'] = cor3_clusters if cor3_clusters is not None else []
-
-
-    elif plane_type == "SAG":
-        sag2_frames = list(frame_candidates.get('SAG2', {}).keys())
-        sag2_scores = list(frame_candidates.get('SAG2', {}).values())
-
-        sag1_frames = list(frame_candidates.get('SAG1', {}).keys())
-        sag1_scores = list(frame_candidates.get('SAG1', {}).values())
-
-        sag1_clusters = None
-        sag2_clusters = None
-        sag3_clusters = None  # new
-
-        if sag2_frames:
-            sag2_data = np.array(list(zip(sag2_frames, sag2_scores)))
-            sag2_clusters = DBSCAN(eps=5.0, min_samples=3).fit(sag2_data).labels_
-        if sag1_frames:
-            sag1_data = np.array(list(zip(sag1_frames, sag1_scores)))
-            sag1_clusters = DBSCAN(eps=5.0, min_samples=3).fit(sag1_data).labels_
-
-        if sag2_frames and sag1_frames:
-            unique_clusters = set(sag2_clusters)
-            if len(unique_clusters - {-1}) > 1:
-                # if there are more than one valid cluster in SAG2 
-                cluster_labels = sorted(list(unique_clusters))
-                left_sag2_cluster = min(np.array(sag2_frames)[sag2_clusters == cluster_labels[0]])
-                right_sag2_cluster = max(np.array(sag2_frames)[sag2_clusters == cluster_labels[-1]])
-
-                if left_sag2_cluster < min(sag1_frames) and right_sag2_cluster > max(sag1_frames):
-                    # there are left and right parasagittal views in one video.
-                    frame_candidates['SAG3'] = {frame: frame_candidates['SAG2'][frame] for frame in frame_candidates['SAG2'] if frame < min(sag1_frames)}
-                    frame_candidates['SAG2'] = {frame: score for frame, score in frame_candidates['SAG2'].items() if frame >= max(sag1_frames)}
-                    log_candidates['SAG3'] = {frame: log_candidates['SAG2'][frame] for frame in log_candidates['SAG2'] if frame < min(sag1_frames)}
-                    log_candidates['SAG2'] = {frame: log for frame, log in log_candidates['SAG2'].items() if frame >= max(sag1_frames)}
-                    sag3_frames = list(frame_candidates.get('SAG3', {}).keys())
-                    sag3_scores = list(frame_candidates.get('SAG3', {}).values())
-                    if sag3_frames:
-                        sag3_data = np.array(list(zip(sag3_frames, sag3_scores)))
-                        sag3_clusters = DBSCAN(eps=5.0, min_samples=3).fit(sag3_data).labels_
-              
-        cluster['SAG1'] = sag1_clusters if sag1_clusters is not None else []
-        cluster['SAG2'] = sag2_clusters if sag2_clusters is not None else []
-        cluster['SAG3'] = sag3_clusters if sag3_clusters is not None else []  
-
-    return frame_candidates, cluster, log_candidates
-
-def select_best_frame(key, frame_scores, log_record, best_log_candidates, cluster, best_frames, overall_best_frames):
-    original_key = key
-    if key == 'SAG2':
-        if 'SAG2' in overall_best_frames.keys():
-            key = 'SAG3'
-
-    current_cluster = cluster.get(original_key, [])
-    
-    if len(current_cluster) > 0:
-        frame_indices = list(frame_scores.keys())
-        current_cluster = current_cluster[:len(frame_indices)]
-        
-        # valid cluster
-        unique_clusters, counts = np.unique(current_cluster, return_counts=True)
-        valid_clusters = unique_clusters[unique_clusters != -1]
-        
-        if len(valid_clusters) > 0:
-            largest_cluster = valid_clusters[np.argmax(counts[unique_clusters != -1])]
-            largest_cluster_size = counts[unique_clusters == largest_cluster][0]
-            
-            if largest_cluster_size >= 6:
-                valid_frames = np.array(frame_indices)[current_cluster == largest_cluster]
-                cluster_center = np.mean(valid_frames)
-                cluster_std = np.std(valid_frames)
-                
-                # Gaussian distribution
-                gaussian = norm(loc=cluster_center, scale=cluster_std)
-                
-                weighted_scores = {}
-                for frame, score in frame_scores.items():
-                    if frame in valid_frames:
-                        gaussian_weight = gaussian.pdf(frame) / gaussian.pdf(cluster_center)
-                        weighted_scores[frame] = score * (1 + gaussian_weight)            
-                    else:
-                        weighted_scores[frame] = score
- 
-                best_frame_idx = max(weighted_scores, key=weighted_scores.get)
-                best_frames[key] = (best_frame_idx, frame_scores[best_frame_idx])
-                best_log_candidates[key] = log_record[best_frame_idx]
-    
-                print(f"Select best frame {best_frame_idx}, Original score: {frame_scores[best_frame_idx]:.4f}, Weighted score: {weighted_scores[best_frame_idx]:.4f}")
-                return best_frame_idx, frame_scores[best_frame_idx], key,  best_frames, best_log_candidates
-        
-    # original score
-    best_frame_idx = max(frame_scores, key=lambda x: frame_scores[x][0] if isinstance(frame_scores[x], list) else frame_scores[x])
-    print(f"Select best frame: {best_frame_idx}, score: {frame_scores[best_frame_idx]:.4f}")
-    best_frames[key] = (best_frame_idx, frame_scores[best_frame_idx])
-    best_log_candidates[key] = log_record[best_frame_idx]
-    return best_frame_idx, frame_scores[best_frame_idx], key,  best_frames, best_log_candidates
-
-def save_best_frames(frame_candidates, output_dir, check_id, check_date):
-    extract_dir = os.path.join(output_dir, 'Standard View',check_id, check_date)
-    os.makedirs(extract_dir, exist_ok=True)
-
-    for key, (frame_idx, score, video_path) in frame_candidates.items():
-        if '.DCM' in video_path:
-            ds = pydicom.dcmread(video_path, force=True)
-            image_data = ds.pixel_array
-            photometric_interpretation = ds.PhotometricInterpretation
-            frame_data = image_data[frame_idx] if len(image_data.shape) >= 3 else image_data
-            pil_frame = process_frame(frame_data, photometric_interpretation)
-        
-        elif '.mp4' in video_path:
-            cap = cv2.VideoCapture(video_path)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
-                print(f"Failed to read frame {frame_idx} from {video_path}")
                 continue
-            pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            cap.release()
-        
-        save_path = os.path.join(extract_dir, f"{key}.png")
-        pil_frame.save(save_path)
-        print(f"Saved best frame {key} to {save_path}")
 
-def process_files(model, video_dir, output_dir, device='cpu',thrh=0.75):
+            # Process frame...
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_frame = Image.fromarray(frame_rgb)
+
+            w, h = pil_frame.size
+            orig_size = torch.tensor([[w, h]]).to(device)
+            im_data = transforms(pil_frame)[None].to(device)
+            output = model(im_data, orig_size)
+
+            labels, boxes, scores = output
+            lab = labels[scores > thrh]
+            box = boxes[scores > thrh]
+            scrs = scores[scores > thrh]
+            labels_list = [neonatal_cranium_label2category.get(label.item(), -1)
+                    for label in lab]
+            labels_list = [label for label in labels_list if label != -1]
+
+            if not labels_list:
+                continue
+
+            possible_views = classify_frame(labels_list)
+
+            for view in possible_views:
+                score = calculate_score(labels_list, box, scrs, view, pil_frame)
+                candidate = CandidateFrame(
+                    frame_idx=frame_idx,
+                    view_type=view,
+                    score=score,
+                    file_path=video_path,
+                    total_frames=num_frames
+                )
+                candidates[view].append(candidate)
+
+        cap.release()
+        print("\nFrame processing completed")
+
+        # Filter invalid candidates
+        print("Filtering invalid candidates...")
+        candidates = filter_invalid_candidates(candidates)
+        if candidates is None:
+            print("No valid candidates found")
+            return None
+
+        # Determine primary queue
+        print("Determining primary queue...")
+        primary_queue = determine_primary_queue(candidates)
+        print(f"Selected primary queue: {primary_queue}")
+
+        print("Filtering frames...")
+        if primary_queue == 'COR':
+            candidates = filter_cor_frames(candidates)
+        else:  # SAG
+            candidates = adjust_sag_frames(candidates)
+
+        processing_time = time.time() - start_time
+        print(f"Processing completed in {timedelta(seconds=int(processing_time))}")
+
+        return {
+            'file_path': video_path,
+            'candidates': candidates,
+            'primary_queue': primary_queue,
+            'total_frames': num_frames
+        }
+
+    except Exception as e:
+        print(f"Error processing video file {video_path}: {str(e)}")
+        return None
+
+def save_best_frames(best_queues, output_dir, id, date):
+    """
+    Save the best frames from video as PNG images and copy the original video file
+    """
+    print("\n=== Saving best frames ===")
+    case_output_dir = os.path.join(output_dir,'StandardViews', id, date)
+    os.makedirs(case_output_dir, exist_ok=True)
+    print(f"Output directory: {case_output_dir}")
+
+    def save_view_frames(queue, queue_type):
+        if not queue:
+            return
+
+        print(f"\nProcessing {queue_type} queue...")
+        video_opened = False
+        cap = None
+
+        for view_type, frames in queue['candidates'].items():
+            if not frames:
+                continue
+
+            # Find frame with highest score
+            best_frame = max(frames, key=lambda x: x.score)
+
+            if not video_opened:
+                # Open video for frame extraction
+                cap = cv2.VideoCapture(best_frame.file_path)
+                video_opened = True
+
+            try:
+                # Extract the specific frame
+                cap.set(cv2.CAP_PROP_POS_FRAMES, best_frame.frame_idx)
+                ret, frame = cap.read()
+                if ret:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(frame_rgb)
+                    img_path = os.path.join(case_output_dir, f"{view_type}.png")
+                    img.save(img_path)
+                    print(f"Saved {view_type} frame (score: {best_frame.score:.3f}) to: {img_path}")
+
+            except Exception as e:
+                print(f"Error saving {queue_type} {view_type} frame: {str(e)}")
+
+        if cap is not None:
+            cap.release()
+
+    # Save COR and SAG queue frames
+    save_view_frames(best_queues['best_cor'], "COR")
+    save_view_frames(best_queues['best_sag'], "SAG")
+
+def extract_views(args):
+    total_start_time = time.time()
+    print("\n=== Starting view extraction ===")
+    print(f"Input directory: {args.dicom_dir}")
+    print(f"Output directory: {args.output_dir}")
+
+    # Dictionary to store processing times for each case
+    case_processing_times = {}
+
+    print("Loading model...")
+
+    cfg = YAMLConfig(args.cfg_detection, resume=args.weight_detection)
+    checkpoint = torch.load(args.weight_detection, map_location=args.device)
+    state = checkpoint['ema']['module'] if 'ema' in checkpoint else checkpoint['model']
+    cfg.model.load_state_dict(state)
+    model = Model(cfg).to(args.device)
+
+    print("Warming up model...")
+    blank_image = torch.zeros((1, 3, 640, 640)).to(args.device)
+    blank_size = torch.tensor([[640, 640]]).to(args.device)
+    _ = model(blank_image, blank_size)
+
     transforms = T.Compose([
         T.Resize((640, 640)),
         T.ToTensor(),
     ])
 
-    for root, _, files in os.walk(video_dir):
-        overall_best_candidate = {}
-        overall_best_frames = {}
-        best_frames = {}
-        best_log_candidates = {}
-        video_files = [f for f in files if f.lower().endswith(('.dcm', '.mp4'))]
-        if len(video_files) > 0 :
-            check_id,check_date = root.split('/')[-2],  root.split('/')[-1] 
-            total_time = [] 
-            total_fps = []
-            for file in video_files:  
-                video_path = os.path.join(root, file)
-                if file.lower().endswith('.dcm'):
-                    frame_candidates, log_candidates,total_frames, time_saving, fps = process_dicom_file(video_path, model, transforms, device, thrh)
+    total_videos = 0
+    processed_videos = 0
 
-                elif file.lower().endswith('.mp4'):
-                    frame_candidates, log_candidates,total_frames, time_saving, fps = process_mp4_file(video_path, model, transforms, device, thrh)
+    # First count total videos
+    for root, _, files in os.walk(args.dicom_dir):
+        total_videos += len([f for f in files if f.lower().endswith('.mp4')])
 
-                start_time = time.time()
-                frame_candidates, plane_type, log_candidates = filter_frame_scores(frame_candidates,log_candidates)
-                frame_candidates, cluster, log_candidates = process_clusters(frame_candidates, plane_type,total_frames,log_candidates)
-                for key in ['COR1', 'COR2', 'COR3', 'SAG1', 'SAG2','SAG3']:
-                    frame_scores = frame_candidates.get(key, {})
-                    log_record = log_candidates.get(key, {})
-                    if frame_scores:
-                        best_frame_idx, best_frame_score, key1, best_frames, best_log_candidates = select_best_frame(key,frame_scores,log_record,best_log_candidates, cluster,best_frames,overall_best_frames)
-                        print(f"Best frame for {key1} in {video_path}: {best_frame_idx} with score {best_frame_score}")
-                for key, (frame_idx, score) in best_frames.items():
-                    if key not in overall_best_frames or score > overall_best_frames[key][1]:
-                        overall_best_frames[key] = (frame_idx, score, video_path)
-                        overall_best_candidate[key] = best_log_candidates[key]
-                
-                end_time = time.time()
-                time_saving.append((end_time - start_time) * 1000)  
+    print(f"\nFound {total_videos} video files to process")
 
-                print(f"Aver Time for 1 frame: {np.mean(time_saving[1:-1]):.2f} ms")
-                print(f"Max Time for 1 frame: {np.max(time_saving[1:-1]):.2f} ms")
-                print(f"Min Time for 1 frame: {np.min(time_saving[1:-1]):.2f} ms")
-                print(f"Total Time: {np.sum(time_saving[1:])/1000:.2f} s")
-                total_time.append(np.sum(time_saving[1:])/1000) 
-                total_fps.append(fps)
-            
-            save_best_frames(overall_best_frames, output_dir, check_id, check_date)
-            os.makedirs(os.path.join(output_dir,'Diagnostic result',check_id,check_date),exist_ok=True)
-            diagnosis_file = os.path.join(output_dir,'Diagnostic result',check_id,check_date, 'diagnosis_result.txt')
-            with open(diagnosis_file, 'w', encoding='utf-8') as f:
-                f.write(f"Diagnostic time：{(np.sum(total_time)):.2f} 秒\n")
-                f.write(f'Candidate frame scoring process:\n')
-                for key, (frame_idx, score, video_path) in overall_best_frames.items():
-                    f.write(f"View {key}:\n")
-                    log_record = overall_best_candidate.get(key, {})
-                    for line in log_record:
-                        f.write(f"  {line}\n")
-                        #print(f"{key}  {line}")
-                #f.write(f'FPS:{np.round(np.mean(total_fps))}\n')
-            print(f"Diagnosis time written to {diagnosis_file}") 
+    for root, _, files in os.walk(args.dicom_dir):
+        video_files = [f for f in files if f.lower().endswith('.mp4')]
 
+        if video_files:
+            case_start_time = time.time()
+            all_results = []
+            id, date = os.path.basename(os.path.dirname(root)), os.path.basename(root)
+            case_id = f"{id}_{date}"
+            print(f"\nProcessing case ID: {case_id}")
+
+            for file in video_files:
+                processed_videos += 1
+                print(f"\nProcessing video {processed_videos}/{total_videos}")
+
+                file_path = os.path.join(root, file)
+                result = process_mp4_file(file_path, model, transforms, args.device, thrh=0.6)
+
+                if result is not None:
+                    all_results.append(result)
+
+            if all_results:
+                print("\nEvaluating candidate queues...")
+                best_queues = evaluate_candidate_queues(all_results)
+                save_best_frames(best_queues, args.output_dir, id, date)
+                all_results.clear()
+
+                # Record processing time for this case
+                case_time = time.time() - case_start_time
+                case_processing_times[case_id] = case_time
+                print(f"Case {case_id} processing time: {timedelta(seconds=int(case_time))}")
+
+    total_time = time.time() - total_start_time
+    print(f"\n=== Processing completed ===")
+    print(f"Total processing time: {timedelta(seconds=int(total_time))}")
+
+    # Convert timedelta objects to seconds for easier handling in the diagnosis module
+    case_processing_times_seconds = {}
+    for case_id, time_value in case_processing_times.items():
+        case_processing_times_seconds[case_id] = time_value
+
+    return case_processing_times_seconds
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--cfg_detection', type=str, default="./configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml")
     parser.add_argument('-r', '--weight_detection', type=str, default="log/detection_weight/detection_weight.pth")
-    parser.add_argument('-d', '--dicom-dir', type=str, default='./Example_', help='Path to directory containing DICOM/MP4 files')
-    parser.add_argument('-o', '--output-dir', type=str, default='./output', help='Directory to save output AVI files')
+    parser.add_argument('-d', '--dicom-dir', type=str, default='/data1/zhm/neonatal_cerebral_lesion/source_data',
+                       help='Root dir for mp4 files(root/ID/Date/videos)')
+    parser.add_argument('-o', '--output-dir', type=str, default='/data1/zhm/neonatal_cerebral_lesion/selected_data')
+    parser.add_argument('--thrh', type=float, default=0.6)
     parser.add_argument('-de', '--device', type=str, default='cuda')
     args = parser.parse_args()
     extract_views(args)
