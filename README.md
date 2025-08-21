@@ -57,36 +57,10 @@
 
 ## 🍼 Visualization
 
-#### 🍭 Standard Views of a Single Case
+#### 🍭 Extracted Standard Views of a Single Case
 
-<p align="center">
-  <!-- First row -->
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/COR1.png" width="100%" alt="COR1">
-    <figcaption style="text-align: center;">COR1: Corpus Callosum</figcaption>
-  </figure>
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/COR2.png" width="100%" alt="COR2">
-    <figcaption style="text-align: center;">COR2: Third Ventricle</figcaption>
-  </figure>
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/COR3.png" width="100%" alt="COR3">
-    <figcaption style="text-align: center;">COR3: Lateral Ventricle</figcaption>
-  </figure>
-  <br>
-  <!-- Second row -->
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/SAG1.png" width="100%" alt="SAG1">
-    <figcaption style="text-align: center;">SAG1: Corpus Callosum</figcaption>
-  </figure>
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/SAG2.png" width="100%" alt="SAG2">
-    <figcaption style="text-align: center;">SAG2: Lateral Ventricle</figcaption>
-  </figure>
-  <figure style="display: inline-block; width: 30%; margin: 5px;">
-    <img src="./output/StandardViews/20221223027/20230104/SAG3.png" width="100%" alt="SAG3">
-    <figcaption style="text-align: center;">SAG3: Cerebellum</figcaption>
-  </figure>
+<p align="left">
+  <img src="output/extracted.png" width="80%" alt="Standard Views Example">
 </p>
 
 #### 🍰 Diagnostic Result
