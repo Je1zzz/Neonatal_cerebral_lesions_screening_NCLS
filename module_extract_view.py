@@ -11,7 +11,7 @@ import shutil
 import json
 from collections import namedtuple
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from src.core import YAMLConfig
+from rt_detr.core import YAMLConfig
 import time
 from datetime import timedelta
 
