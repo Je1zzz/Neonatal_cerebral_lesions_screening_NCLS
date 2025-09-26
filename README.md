@@ -26,7 +26,7 @@
    cd Neonatal_cerebral_lesions_screening_NCLS
 
    ## create conda env
-   conda create --name NCLS python=3.10
+   conda create --name NCLS python=3.12
    conda activate NCLS
 
    ## install dependencies
@@ -42,7 +42,7 @@
     ```bash
     python module_diagnosis.py \
         --cfg_classfication configs/convnext.yaml \
-        --weight_classfication log/diagnostic_weight.pth \
+        --weight_classfication log/diagnostic_weight \
         --cfg_detection configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml \
         --weight_detection log/detection_weight.pth \
         --dicom-dir Example_ \
@@ -68,7 +68,7 @@
 
 ## ☕ Acknowledgements
 
-This project uses the [RT-DETR](https://github.com/lyuwenyu/RT-DETR) framework for real-time detection. We thank the authors for making their code open source.
+This project uses the [RT-DETR](https://github.com/lyuwenyu/RT-DETR) framework for real-time detection. We thank the authors for making their code open source. We have only kept the code necessary for inference. For the full code, please refer to the original source.
 
 ## Citation
 If you find our work useful, please cite:

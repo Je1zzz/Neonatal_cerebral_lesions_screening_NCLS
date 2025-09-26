@@ -512,11 +512,11 @@ def extract_views(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--cfg_detection', type=str, default="./configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml")
-    parser.add_argument('-r', '--weight_detection', type=str, default="log/detection_weight/detection_weight.pth")
-    parser.add_argument('-d', '--dicom-dir', type=str, default='/data1/zhm/neonatal_cerebral_lesion/source_data',
+    parser.add_argument('-c', '--cfg_detection', type=str, default="./configs/rtdetrv2/infer_r50vd.yml")
+    parser.add_argument('-r', '--weight_detection', type=str, default="/data1/zhm/training_log/bb_detection/checkpoint0100.pth")
+    parser.add_argument('-d', '--dicom-dir', type=str, default='Example_',
                        help='Root dir for mp4 files(root/ID/Date/videos)')
-    parser.add_argument('-o', '--output-dir', type=str, default='/data1/zhm/neonatal_cerebral_lesion/selected_data')
+    parser.add_argument('-o', '--output-dir', type=str, default='output')
     parser.add_argument('--thrh', type=float, default=0.6)
     parser.add_argument('-de', '--device', type=str, default='cuda')
     args = parser.parse_args()
