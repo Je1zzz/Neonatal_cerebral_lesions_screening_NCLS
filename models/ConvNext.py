@@ -1,6 +1,10 @@
 """
-original code from facebook research:
-https://github.com/facebookresearch/ConvNeXt
+功能：ConvNeXt分类模型用于新生儿颅脑超声诊断
+基于Facebook Research的ConvNeXt架构：https://github.com/facebookresearch/ConvNeXt
+包含：
+- 患者级分类头（使用自注意力机制整合多张图像）
+- 图像级分类头（病变类型分类）
+- 视图分类头（识别标准视图类型）
 """
 
 import torch

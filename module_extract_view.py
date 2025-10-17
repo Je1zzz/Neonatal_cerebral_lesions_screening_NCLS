@@ -1,3 +1,12 @@
+"""
+功能：从新生儿颅脑超声视频中自动提取标准视图
+主要步骤：
+1. 加载RT-DETR检测模型
+2. 逐帧分析视频，检测解剖结构
+3. 根据解剖结构组合判断视图类型（COR1-3, SAG1-3）
+4. 评分并筛选最佳候选帧
+5. 保存每个视图的最佳帧为PNG图像
+"""
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
