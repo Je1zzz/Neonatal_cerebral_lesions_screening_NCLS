@@ -1,30 +1,33 @@
-<h1 align="center">NCLS：新生儿脑损伤筛查系统</h1>
-<h3 align="center">Neonatal Cerebral Lesions Screening</h3>
+<h1 align="center">NCLS: Neonatal Cerebral Lesions Screening</h1>
+<h3 align="center">Deep Learning-based Automated Screening System for Neonatal Brain Injury</h3>
 
 <p align="center">
   <a href="https://www.nature.com/articles/s41467-025-63096-9"><img src="https://img.shields.io/badge/Nature%20Communications-Paper-0b7fab.svg" alt="Nature Communications"></a>
   <a href="https://github.com/Je1zzz/Neonatal_cerebral_lesions_screening_NCLS/stargazers"><img src="https://img.shields.io/github/stars/Je1zzz/Neonatal_cerebral_lesions_screening_NCLS" alt="Stars"></a>
   <img src="https://img.shields.io/badge/Python-3.12-blue.svg" alt="Python 3.12">
   <img src="https://img.shields.io/badge/PyTorch-2.2.0-ee4c2c.svg" alt="PyTorch 2.2.0">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
 </p>
 
 ---
 
-## 📰 最新消息
+## 📰 News
 
-**[2025-08-21]** 论文 **"Deep learning approach for screening neonatal cerebral lesions on ultrasound in China"** 已发表于 [*Nature Communications*](https://www.nature.com/articles/s41467-025-63096-9)
+**[2025-08-21]** Our paper **"Deep learning approach for screening neonatal cerebral lesions on ultrasound in China"** has been published in [*Nature Communications*](https://www.nature.com/articles/s41467-025-63096-9)! 🎉
 
 ---
 
-## 📖 项目简介
+## 📖 Overview
 
-NCLS 是一个基于深度学习的新生儿颅脑超声自动筛查系统，可以：
-- ✨ **自动提取标准视图**：从颅脑超声视频中智能识别并提取标准视图
-- 🔍 **智能诊断**：基于提取的标准视图自动判断是否存在严重脑损伤
-- ⚡ **高效准确**：结合目标检测和分类模型，实现快速准确的筛查
+NCLS is an end-to-end deep learning system designed for automated screening of neonatal brain injuries using cranial ultrasound. The system achieves:
+
+- ✨ **Automated Standard View Extraction**: Intelligently identifies and extracts standard views from cranial ultrasound videos
+- 🔍 **AI-Powered Diagnosis**: Automatically determines the presence of severe brain injuries based on extracted views
+- ⚡ **Clinical-Grade Performance**: Validated on large-scale clinical data with high accuracy and efficiency
+- 🏥 **Production-Ready**: Optimized for real-world deployment in clinical settings
 
 <details>
-  <summary><b>📊 查看系统架构</b></summary>
+  <summary><b>📊 View System Architecture</b></summary>
   <p align="center">
     <img src="./output/Figure1_01.png" alt="Overall Architecture" width="100%">
   </p>
@@ -32,55 +35,70 @@ NCLS 是一个基于深度学习的新生儿颅脑超声自动筛查系统，可
 
 ---
 
-## 🚀 快速开始
+## 🚀 Getting Started
 
-### 环境配置
+### Prerequisites
 
-本项目基于 **Python 3.12**、**PyTorch 2.2.0** 和 **torchvision 1.17.0** 开发。
+- Python 3.12
+- PyTorch 2.2.0
+- torchvision 1.17.0
+- CUDA-compatible GPU (recommended)
+
+### Installation
 
 ```bash
-# 克隆仓库
+# Clone the repository
 git clone https://github.com/Je1zzz/Neonatal_cerebral_lesions_screening_NCLS.git
 cd Neonatal_cerebral_lesions_screening_NCLS
 
-# 创建 conda 环境
+# Create conda environment
 conda create --name NCLS python=3.12
 conda activate NCLS
 
-# 安装依赖
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-> **💡 提示**：关于 CUDA 和 PyTorch 版本对应关系，请参考：
-> - [CUDA与GPU对应关系](https://zhuanlan.zhihu.com/p/633473214)
-> - [PyTorch历史版本](https://pytorch.org/get-started/previous-versions/)
+> **💡 Note**: For CUDA and PyTorch version compatibility, please refer to:
+> - [CUDA and GPU Compatibility Guide](https://zhuanlan.zhihu.com/p/633473214)
+> - [PyTorch Previous Versions](https://pytorch.org/get-started/previous-versions/)
 
-### 下载数据和模型
+### Download Pre-trained Models and Data
 
-从 [Google Drive](https://drive.google.com/drive/folders/1aQDuLPmSBAULJ5soqeizaEkAHiwfpV1o?usp=sharing) 下载：
-- 📦 **示例数据**：放置到 `./Example_` 文件夹
-- 🎯 **预训练权重**：放置到 `./log` 文件夹
+Download the following from [Google Drive](https://drive.google.com/drive/folders/1aQDuLPmSBAULJ5soqeizaEkAHiwfpV1o?usp=sharing):
 
+- 📦 **Example Data**: Place in `./Example_/` directory
+- 🎯 **Pre-trained Weights**: Place in `./log/` directory
+
+**Expected Directory Structure:**
 ```
-项目结构：
 Neonatal_cerebral_lesions_screening_NCLS/
-├── Example_/          # 示例视频数据
-├── log/               # 模型权重文件
+├── Example_/              # Sample ultrasound videos
+│   └── [PatientID]/
+│       └── [ExamDate]/
+│           └── *.mp4
+├── log/                   # Model checkpoints
 │   ├── diagnostic_weight/
+│   │   ├── fold_1.pth
+│   │   ├── fold_2.pth
+│   │   ├── fold_3.pth
+│   │   ├── fold_4.pth
+│   │   └── fold_5.pth
 │   └── detection_weight.pth
-├── output/            # 输出结果
-├── configs/           # 配置文件
-├── models/            # 模型定义
-└── utils/             # 工具函数
+├── output/                # Output results
+├── configs/               # Configuration files
+├── models/                # Model definitions
+├── utils/                 # Utility functions
+└── rt_detr/              # RT-DETR detection framework
 ```
 
 ---
 
-## 🎯 运行推理
+## 🎯 Usage
 
-### 完整推理流程
+### Complete Inference Pipeline
 
-在命令行中运行以下命令，系统将自动完成视图提取和诊断：
+Run the full pipeline (view extraction + diagnosis):
 
 ```bash
 python module_diagnosis.py \
@@ -93,9 +111,9 @@ python module_diagnosis.py \
     --device cuda
 ```
 
-### 仅提取标准视图
+### Standard View Extraction Only
 
-如果只需要提取标准视图：
+Extract standard views without running diagnosis:
 
 ```bash
 python module_extract_view.py \
@@ -106,22 +124,38 @@ python module_extract_view.py \
     --device cuda
 ```
 
-### 执行流程
+### Output Structure
 
-1. **视图提取**：从颅脑超声视频中自动提取标准视图，保存到 `output/StandardViews/` 文件夹
-2. **诊断分析**：基于提取的标准视图进行诊断，结果保存到 `output/DiagnosisResult/` 文件夹
+The system generates the following outputs:
+
+```
+output/
+├── StandardViews/         # Extracted standard views
+│   └── [PatientID]/
+│       └── [ExamDate]/
+│           ├── COR1.png   # Coronal view 1
+│           ├── COR2.png   # Coronal view 2
+│           ├── COR3.png   # Coronal view 3
+│           ├── SAG1.png   # Sagittal view 1
+│           ├── SAG2.png   # Sagittal view 2
+│           └── SAG3.png   # Sagittal view 3
+└── DiagnosisResult/       # Diagnosis reports
+    └── [PatientID]/
+        └── [ExamDate]/
+            └── diagnosis_result.txt
+```
 
 ---
 
-## 📊 可视化结果
+## 📊 Visualization
 
-### 提取的标准视图示例
+### Extracted Standard Views
 
 <p align="center">
   <img src="output/extracted.png" width="85%" alt="Standard Views Example">
 </p>
 
-### 诊断结果示例
+### Diagnosis Report
 
 <p align="center">
   <img src="./output/result.png" width="85%" alt="Diagnostic Result">
@@ -129,15 +163,33 @@ python module_extract_view.py \
 
 ---
 
-## 🙏 致谢
+## 🔬 Technical Details
 
-本项目使用了 [RT-DETR](https://github.com/lyuwenyu/RT-DETR) 框架进行实时目标检测。感谢作者开源代码。为了保持项目简洁，我们仅保留了推理所需的代码。如需完整代码，请参考原始仓库。
+### Models
+
+- **Detection Model**: RT-DETR (Real-Time DEtection TRansformer) for anatomical structure detection
+- **Classification Model**: ConvNeXt with multi-head attention for patient-level diagnosis
+
+### Key Features
+
+- **5-Fold Ensemble**: Utilizes 5-fold cross-validation models for robust predictions
+- **Test-Time Augmentation (TTA)**: Applies 10× TTA to improve diagnostic accuracy
+- **Multi-Level Classification**: 
+  - Patient-level classification (Severe/Non-severe)
+  - Image-level classification (lesion type detection)
+  - View-level classification (standard view identification)
 
 ---
 
-## 📝 引用
+## 🙏 Acknowledgements
 
-如果本项目对您的研究有帮助，请引用我们的论文：
+This project utilizes the [RT-DETR](https://github.com/lyuwenyu/RT-DETR) framework for real-time detection. We sincerely thank the authors for making their code publicly available. For simplicity, we have included only the inference-related code. For the complete codebase, please refer to the original repository.
+
+---
+
+## 📝 Citation
+
+If you find our work useful in your research, please consider citing:
 
 ```bibtex
 @article{lin2025deep,
@@ -156,12 +208,24 @@ python module_extract_view.py \
 
 ---
 
-## 📄 许可证
+## 📄 License
 
-本项目采用 [MIT License](LICENSE)。
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please feel free to submit issues or pull requests.
+
+---
+
+## 📧 Contact
+
+For questions or collaboration opportunities, please contact the corresponding authors through the Nature Communications paper.
 
 ---
 
 <p align="center">
-  Made with ❤️ by the NCLS Team
+  <b>Made with ❤️ by the NCLS Research Team</b>
 </p>
