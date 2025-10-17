@@ -208,24 +208,12 @@ If you find our work useful in your research, please consider citing:
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please feel free to submit issues or pull requests.
-
----
-
 ## 📧 Contact
 
-For questions or collaboration opportunities, please contact the corresponding authors through the Nature Communications paper.
+For questions or collaboration opportunities, please contact the corresponding authors through the Nature Communications paper or reach out via [📧 haoming.zhang233@gmail.com](mailto:haoming.zhang233@gmail.com).
 
 ---
 
 <p align="center">
-  <b>Made with ❤️ by the NCLS Research Team</b>
+  ❤️
 </p>
